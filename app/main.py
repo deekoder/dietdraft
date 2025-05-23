@@ -1,21 +1,30 @@
 # app/main.py
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
-# Import from our modules
-from .models import MealRequest, MealResponse
-from .models import ReasoningRequest, ReasoningResponse
-from .services import generate_meal, generate_meal_reasoning
+# Import custom documentation service (updated import path)
+from .services.custom_docs_service import add_custom_docs_route
 
-# Load environment variables
-load_dotenv()
+# Import routes
+from .routes.meal_routes import router as meal_router
+from .routes.reasoning_routes import router as reasoning_router
 
 # Create FastAPI app
 app = FastAPI(
     title="DietDraft API",
-    description="Simple API for generating meals",
+    description="AI-powered meal planning and nutritional reasoning API",
     version="0.1.0",
+    docs_url=None,  # Disable default docs to use our custom docs
+    openapi_tags=[
+        {
+            "name": "Meals",
+            "description": "Endpoints for generating meal recipes based on preferences"
+        },
+        {
+            "name": "Nutrition",
+            "description": "Endpoints for nutritional analysis and reasoning"
+        }
+    ]
 )
 
 # Enable CORS
@@ -27,60 +36,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API endpoints
-@app.get("/")
+# Add custom documentation
+add_custom_docs_route(app)
+
+# Include routers
+app.include_router(meal_router, prefix="", tags=["Meals"])
+app.include_router(reasoning_router, prefix="", tags=["Nutrition"])
+
+# Root endpoint redirect to docs
+@app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "Welcome to the DietDraft API",
-        "endpoints": {
-            "POST /generate-meal": "Generate a single meal recipe with customizable options"
-        },
-        "version": "0.1.0"
-    }
-
-@app.post("/generate-meal", response_model=MealResponse)
-async def api_generate_meal(request: MealRequest):
-    """Generate a single meal with dietary preferences and meal type."""
-    try:
-        result = generate_meal(
-            api_key=request.api_key,
-            meal_type=request.meal_type,
-            dietary_preferences=request.dietary_preferences,
-            allergies=request.allergies,
-            max_calories=request.max_calories,
-            cuisine_type=request.cuisine_type,
-            include_ingredients=request.include_ingredients
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-# main.py
-
-@app.post("/meal-reasoning", response_model=ReasoningResponse)
-async def api_meal_reasoning(request: ReasoningRequest):
-    """
-    Generate nutritional reasoning about a meal.
-    
-    This endpoint analyzes a meal's ingredients and provides concise nutritional insights
-    organized into three key areas:
-    
-    - Key ingredient choices: Why specific ingredients were selected
-    - Nutritional benefits: Overall nutritional value of the meal
-    - Dietary alignment: How the meal meets specified dietary preferences
-    
-    The response contains brief, evidence-based explanations suitable for educational
-    display alongside a recipe.
-    """
-    try:
-        result = generate_meal_reasoning(
-            api_key=request.api_key,
-            meal_name=request.meal_name,
-            ingredients=request.ingredients,
-            instructions=request.instructions,
-            dietary_preferences=request.dietary_preferences
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Redirect root to docs"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")

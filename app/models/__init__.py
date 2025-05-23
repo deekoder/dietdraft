@@ -1,13 +1,14 @@
-# models/__init__.py
-from .meal_models import MealRequest, MealResponse
-from .reasoning_models import ReasoningRequest, ReasoningResponse
+# app/models/__init__.py
 from .common_models import ApiKeyRequest, ErrorResponse
+from .meal_models import MealRequest, MealResponse
+from .reasoning_models import ReasoningRequest, ReasoningResponse, ReasoningHighlights
 
 __all__ = [
-    "MealRequest",
-    "MealResponse", 
     "ApiKeyRequest",
+    "ErrorResponse",
+    "MealRequest",
+    "MealResponse",
     "ReasoningRequest",
     "ReasoningResponse",
-    "ErrorResponse"
+    "ReasoningHighlights"
 ]
