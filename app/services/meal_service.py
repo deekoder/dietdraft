@@ -38,7 +38,17 @@ def generate_meal(
         raise ValueError("OpenAI API key is required")
     
     # Initialize OpenAI client
-    client = OpenAI(api_key=key)
+    try:
+        client = OpenAI(api_key=key)
+    except TypeError as e:
+        if "proxies" in str(e):
+            # Render sometimes passes proxy settings that OpenAI client doesn't accept
+            # Initialize without any environment-based proxy settings
+            import openai
+            openai.api_key = key
+            client = openai.OpenAI()
+        else:
+            raise e
     
     # Build dietary requirements text
     dietary_text = _build_dietary_requirements_text(
