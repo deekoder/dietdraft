@@ -2,12 +2,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import custom documentation service (updated import path)
+# Import custom documentation service
 from .services.custom_docs_service import add_custom_docs_route
 
 # Import routes
 from .routes.meal_routes import router as meal_router
 from .routes.reasoning_routes import router as reasoning_router
+from .routes.voice_routes import router as voice_router  # Add this line
 
 # Create FastAPI app
 app = FastAPI(
@@ -23,6 +24,10 @@ app = FastAPI(
         {
             "name": "Nutrition",
             "description": "Endpoints for nutritional analysis and reasoning"
+        },
+        {  # Add this section
+            "name": "Voice",
+            "description": "Endpoints for processing voice input"
         }
     ]
 )
@@ -42,6 +47,7 @@ add_custom_docs_route(app)
 # Include routers
 app.include_router(meal_router, prefix="", tags=["Meals"])
 app.include_router(reasoning_router, prefix="", tags=["Nutrition"])
+app.include_router(voice_router, prefix="", tags=["Voice"])  # Add this line
 
 # Root endpoint redirect to docs
 @app.get("/", include_in_schema=False)

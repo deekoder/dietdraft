@@ -4,5 +4,6 @@ from app.routes.reasoning_routes import router as reasoning_router
 
 __all__ = [
     "meal_router",
-    "reasoning_router"
+    "reasoning_router",
+    "voice_router"
 ]

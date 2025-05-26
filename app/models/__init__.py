@@ -2,6 +2,7 @@
 from .common_models import ApiKeyRequest, ErrorResponse
 from .meal_models import MealRequest, MealResponse
 from .reasoning_models import ReasoningRequest, ReasoningResponse, ReasoningHighlights
+from .voice_models import VoiceInputRequest, VoiceInputResponse  # Add this line
 
 __all__ = [
     "ApiKeyRequest",
@@ -10,5 +11,7 @@ __all__ = [
     "MealResponse",
     "ReasoningRequest",
     "ReasoningResponse",
-    "ReasoningHighlights"
+    "ReasoningHighlights",
+    "VoiceInputRequest",     
+    "VoiceInputResponse"     
 ]

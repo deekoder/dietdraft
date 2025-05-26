@@ -6,5 +6,6 @@ from app.services.custom_docs_service import add_custom_docs_route
 __all__ = [
     "generate_meal",
     "generate_meal_reasoning",
-    "add_custom_docs_route"
+    "add_custom_docs_route",
+    "parse_voice_to_json" 
 ]
