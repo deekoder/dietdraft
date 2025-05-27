@@ -14,33 +14,125 @@ from app.services.reasoning_services import generate_meal_reasoning
 
 load_dotenv()
 
-# Simple in-memory conversation storage (will replace with Supabase later)
+# Simple in-memory conversation storage with better session management
 conversations = {}
 
-def analyze_user_intent(message: str, api_key: str) -> Dict[str, Any]:
+def process_diet_coach_request(
+    message: str,
+    conversation_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    api_key: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    Analyze user message to determine intent and extract key information.
+    Main diet coach processing function with improved session management.
     
     Args:
         message: User's message
+        conversation_id: Optional conversation ID for context
+        user_id: Optional user ID for session management
         api_key: OpenAI API key
         
     Returns:
-        Dict with intent analysis and extracted information
+        Dict with coach response and tool results
+    """
+    # Get API key
+    key = api_key or os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise ValueError("OpenAI API key is required")
+    
+    # Generate user_id if not provided (anonymous user)
+    if not user_id:
+        user_id = str(uuid.uuid4())
+    
+    # Generate conversation ID if not provided
+    if not conversation_id:
+        conversation_id = str(uuid.uuid4())
+    
+    # Get or create conversation history in memory
+    # Using user_id as part of the key for better session management
+    session_key = f"{user_id}:{conversation_id}"
+    
+    if session_key not in conversations:
+        conversations[session_key] = []
+        print(f"Created new conversation: {session_key}")
+    else:
+        print(f"Continuing conversation: {session_key} (has {len(conversations[session_key])} messages)")
+    
+    conversation_history = conversations[session_key]
+    
+    # Add user message to history
+    conversation_history.append({
+        "role": "user",
+        "content": message,
+        "timestamp": "now"
+    })
+    
+    # Step 1: Analyze user intent with conversation context
+    intent_analysis = analyze_user_intent_with_context(message, conversation_history, key)
+    
+    # Step 2: Execute appropriate tools
+    tool_execution = execute_tools(intent_analysis, key)
+    
+    # Step 3: Generate coaching response
+    coach_response = generate_coach_response_with_context(
+        message=message,
+        conversation_history=conversation_history,
+        intent_analysis=intent_analysis,
+        tool_execution=tool_execution,
+        api_key=key
+    )
+    
+    # Add coach response to history
+    conversation_history.append({
+        "role": "assistant",
+        "content": coach_response,
+        "timestamp": "now"
+    })
+    
+    # Update conversation storage
+    conversations[session_key] = conversation_history
+    
+    print(f"Updated conversation {session_key}: now has {len(conversation_history)} messages")
+    
+    return {
+        "response": coach_response,
+        "action_taken": intent_analysis.get("intent"),
+        "tools_used": tool_execution.get("tools_used", []),
+        "conversation_id": conversation_id,
+        "user_id": user_id,
+        "data": tool_execution.get("results", {})
+    }
+
+def analyze_user_intent_with_context(
+    message: str, 
+    conversation_history: List[Dict], 
+    api_key: str
+) -> Dict[str, Any]:
+    """
+    Analyze user message with conversation context (simplified for in-memory version).
     """
     client = OpenAI(api_key=api_key)
     
+    # Build context from conversation history
+    context_text = ""
+    if len(conversation_history) > 2:  # More than just current message
+        context_text = "Recent conversation:\n"
+        for msg in conversation_history[-6:-1]:  # Last few messages, excluding current
+            role = "User" if msg["role"] == "user" else "Diet Coach"
+            context_text += f"{role}: {msg['content'][:100]}...\n"
+    
     prompt = f"""
-    Analyze this user message and extract information:
+    Analyze this user message in context:
     
-    Message: "{message}"
+    Current message: "{message}"
     
-    Extract and determine:
-    1. Primary intent (what do they want?)
-    2. Any specific ingredients mentioned
-    3. Any dietary preferences mentioned
-    4. Any substitution needs
-    5. What tools should be used to help them
+    {context_text}
+    
+    Based on the conversation context, determine:
+    1. What the user is asking for
+    2. What tools should be used
+    3. What information can be extracted
+    4. How this relates to previous conversation
     
     Available tools:
     - generate_meal: Create a new recipe
@@ -49,7 +141,7 @@ def analyze_user_intent(message: str, api_key: str) -> Dict[str, Any]:
     
     Respond with JSON:
     {{
-        "intent": "generate_recipe" | "find_substitutions" | "analyze_nutrition" | "general_question",
+        "intent": "generate_recipe" | "find_substitutions" | "analyze_nutrition" | "general_question" | "follow_up",
         "tools_needed": ["generate_meal"],
         "extracted_info": {{
             "ingredients": ["chicken", "broccoli"],
@@ -58,12 +150,12 @@ def analyze_user_intent(message: str, api_key: str) -> Dict[str, Any]:
                 {{"ingredient": "butter", "reason": "dairy-free"}}
             ],
             "meal_type": "dinner",
-            "allergies": ["nuts"]
+            "allergies": ["nuts"],
+            "references_previous": true
         }},
-        "confidence": 0.8
+        "confidence": 0.8,
+        "context_understanding": "User is asking for modifications to previously generated meal"
     }}
-    
-    Only include information that is explicitly mentioned in the message.
     """
     
     try:
@@ -72,7 +164,7 @@ def analyze_user_intent(message: str, api_key: str) -> Dict[str, Any]:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an intent analysis system for a diet coach. Always respond with valid JSON. Only extract information explicitly mentioned by the user."
+                    "content": "You are an intent analysis system for a diet coach. Use conversation context to understand requests. Always respond with valid JSON."
                 },
                 {"role": "user", "content": prompt}
             ],
@@ -83,12 +175,17 @@ def analyze_user_intent(message: str, api_key: str) -> Dict[str, Any]:
         
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        # Fallback analysis
+        # Enhanced fallback with conversation awareness
+        has_previous_context = len(conversation_history) > 2
+        
         return {
-            "intent": "generate_recipe" if any(word in message.lower() for word in ["make", "recipe", "cook", "meal"]) else "general_question",
+            "intent": "follow_up" if has_previous_context else "generate_recipe",
             "tools_needed": ["generate_meal"],
-            "extracted_info": {},
-            "confidence": 0.3
+            "extracted_info": {
+                "references_previous": has_previous_context
+            },
+            "confidence": 0.3,
+            "context_understanding": "Fallback analysis due to parsing error"
         }
 
 def execute_tools(intent_analysis: Dict[str, Any], api_key: str) -> Dict[str, Any]:
@@ -173,7 +270,7 @@ def execute_tools(intent_analysis: Dict[str, Any], api_key: str) -> Dict[str, An
         "results": tool_results
     }
 
-def generate_coach_response(
+def generate_coach_response_with_context(
     message: str,
     conversation_history: List[Dict],
     intent_analysis: Dict[str, Any],
@@ -181,70 +278,69 @@ def generate_coach_response(
     api_key: str
 ) -> str:
     """
-    Generate a personalized coaching response based on context and tool results.
+    Generate a personalized coaching response with conversation context.
     """
     client = OpenAI(api_key=api_key)
     
-    # Build context from conversation history
+    # Build rich context from conversation history
     history_context = ""
     if len(conversation_history) > 2:
-        recent_messages = conversation_history[-4:]  # Last 2 exchanges
-        history_context = "Previous conversation context:\n"
-        for msg in recent_messages[:-1]:  # Exclude current message
+        recent_messages = conversation_history[-6:-1]  # Last few exchanges, excluding current
+        history_context = "Conversation context:\n"
+        for msg in recent_messages:
             role = "User" if msg["role"] == "user" else "Diet Coach"
-            history_context += f"{role}: {msg['content'][:100]}...\n"
+            history_context += f"{role}: {msg['content'][:150]}...\n"
     
-    # Build tool results context
+    # Build tool results context with better formatting
     tool_results = tool_execution.get("results", {})
     tool_context = ""
     
     if "meal" in tool_results:
         meal = tool_results["meal"]
         tool_context += f"Generated meal: {meal.get('meal_name', 'Unknown')}\n"
-        tool_context += f"Ingredients: {', '.join(meal.get('ingredients', []))}\n"
+        if meal.get("ingredients"):
+            tool_context += f"Key ingredients: {', '.join(meal.get('ingredients', [])[:3])}...\n"
         if meal.get("dietary_info"):
-            tool_context += f"Dietary info: {meal.get('dietary_info')}\n"
+            tool_context += f"Dietary benefits: {meal.get('dietary_info')}\n"
     
     if "substitutions" in tool_results:
         subs = tool_results["substitutions"]
-        tool_context += "Found substitutions:\n"
-        for sub in subs:
-            tool_context += f"- {sub.get('original_ingredient')} alternatives: "
-            alt_names = [alt.get('ingredient', '') for alt in sub.get('substitutions', [])]
-            tool_context += ", ".join(alt_names[:3]) + "\n"
+        tool_context += f"Found {len(subs)} substitution group(s):\n"
+        for sub in subs[:2]:  # Show first 2
+            alternatives = [alt.get('ingredient', '') for alt in sub.get('substitutions', [])[:2]]
+            tool_context += f"- {sub.get('original_ingredient')} → {', '.join(alternatives)}\n"
     
     if "reasoning" in tool_results:
         reasoning = tool_results["reasoning"].get("reasoning", {})
-        tool_context += f"Nutritional benefits: {reasoning.get('nutritional_benefits', '')}\n"
+        if reasoning.get("nutritional_benefits"):
+            tool_context += f"Nutritional insight: {reasoning.get('nutritional_benefits')[:100]}...\n"
     
-    # Handle errors gracefully
-    error_context = ""
-    for key, value in tool_results.items():
-        if "error" in key:
-            error_context += f"Note: Had trouble with {key.replace('_error', '')}: {value}\n"
+    # Handle context awareness
+    context_awareness = intent_analysis.get("context_understanding", "")
+    references_previous = intent_analysis.get("extracted_info", {}).get("references_previous", False)
     
     prompt = f"""
-    You are a friendly, knowledgeable diet coach. Respond to the user's message in a 
-    supportive and informative coaching style.
+    You are a knowledgeable, friendly diet coach having an ongoing conversation with a user.
     
     {history_context}
     
     User's current message: "{message}"
     
+    Context analysis: {context_awareness}
+    References previous conversation: {references_previous}
+    
     {tool_context}
     
-    {error_context}
-    
-    As a diet coach, provide a helpful response that:
-    1. Acknowledges what the user asked for
-    2. Presents any generated recipes or substitutions clearly
-    3. Offers nutritional insights when relevant
-    4. Asks follow-up questions if more information would be helpful
+    As their diet coach, provide a response that:
+    1. Acknowledges the conversation context when relevant
+    2. Presents any generated content (recipes, substitutions) clearly
+    3. Relates back to previous conversation when appropriate
+    4. Offers follow-up questions or suggestions
     5. Uses encouraging, professional coaching language
+    6. Shows understanding of their ongoing needs
     
-    Keep the response conversational but informative. If you generated a meal, 
-    present it in an organized way. If you found substitutions, explain why 
-    they work well.
+    Keep responses conversational, helpful, and personalized. If you used tools,
+    integrate the results naturally into your coaching advice.
     """
     
     try:
@@ -253,85 +349,14 @@ def generate_coach_response(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a professional diet coach who provides helpful, encouraging guidance about nutrition and meal planning. Be friendly, knowledgeable, and supportive."
+                    "content": "You are an experienced diet coach who maintains context across conversations and provides personalized guidance. Be warm, knowledgeable, and helpful."
                 },
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=600
         )
         
         return response.choices[0].message.content
     except Exception as e:
-        return "I'm here to help you with your nutrition goals! Could you tell me a bit more about what you're looking for today?"
-
-def process_diet_coach_request(
-    message: str,
-    conversation_id: Optional[str] = None,
-    api_key: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Main diet coach processing function with tool selection and execution.
-    
-    Args:
-        message: User's message
-        conversation_id: Optional conversation ID for context
-        api_key: OpenAI API key
-        
-    Returns:
-        Dict with coach response and tool results
-    """
-    # Get API key
-    key = api_key or os.getenv("OPENAI_API_KEY")
-    if not key:
-        raise ValueError("OpenAI API key is required")
-    
-    # Generate conversation ID if not provided
-    if not conversation_id:
-        conversation_id = str(uuid.uuid4())
-    
-    # Get or create conversation history
-    if conversation_id not in conversations:
-        conversations[conversation_id] = []
-    
-    conversation_history = conversations[conversation_id]
-    
-    # Add user message to history
-    conversation_history.append({
-        "role": "user",
-        "content": message,
-        "timestamp": "now"
-    })
-    
-    # Step 1: Analyze user intent and extract information
-    intent_analysis = analyze_user_intent(message, key)
-    
-    # Step 2: Execute appropriate tools
-    tool_execution = execute_tools(intent_analysis, key)
-    
-    # Step 3: Generate coaching response
-    coach_response = generate_coach_response(
-        message=message,
-        conversation_history=conversation_history,
-        intent_analysis=intent_analysis,
-        tool_execution=tool_execution,
-        api_key=key
-    )
-    
-    # Add coach response to history
-    conversation_history.append({
-        "role": "assistant",
-        "content": coach_response,
-        "timestamp": "now"
-    })
-    
-    # Update conversation storage
-    conversations[conversation_id] = conversation_history
-    
-    return {
-        "response": coach_response,
-        "action_taken": intent_analysis.get("intent"),
-        "tools_used": tool_execution.get("tools_used", []),
-        "conversation_id": conversation_id,
-        "data": tool_execution.get("results", {})
-    }
+        return "I'm here to help you with your nutrition goals! I'm having a technical moment - could you tell me again what you'd like to work on?"
