@@ -15,7 +15,7 @@ class VoiceInputResponse(BaseModel):
     meal_type: Optional[str] = None
     include_ingredients: List[str] = []
     dietary_preferences: List[str] = []
-    allergies: List[str] = []
+    allergies: Optional[List[str]] = []
     max_calories: Optional[int] = None
     cuisine_type: Optional[str] = None
     parsed_text: str = Field(
